@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pandas
+pyarrow
+fsspec
+hf_transfer
+openai
+python-dotenv
