@@ -314,5 +314,44 @@ def classify_user_profile(user_data: UserProfile):
             status_code=500,
             detail=f"Erro ao classificar perfil: {str(e)}"
         )
+    
+@app.get("/user_profile", response_model=ProfileResponse)
+def get_user_profile():
+    # Carrega modelos treinados
+    kmeans, scaler = load_models()
+    
+    # Conecta ao banco e calcula médias das features
+    conn = sqlite3.connect(DATABASE_URL)
+    cursor = conn.cursor()
+    
+    # Verifica se há dados suficientes
+    cursor.execute("SELECT COUNT(*) FROM saved_ids")
+    count = cursor.fetchone()[0]
+    
+    if count == 0:
+        raise HTTPException(status_code=404, detail="Nenhuma roupa salva no banco...")
+    
+    # Calcula médias de todas as features
+    cursor.execute("""
+        SELECT 
+            AVG(color_grade) as avg_cores_vivas,
+            AVG(versatile_grade) as avg_versatilidade,
+            AVG(comfort_grade) as avg_conforto,
+            AVG(formal_grade) as avg_formalidade,
+            AVG(stamps_grade) as avg_estampas
+        FROM saved_ids
+    """)
+    
+    # Processa e classifica
+    features_array = np.array([cursor.fetchone()])
+    scaled_features = scaler.transform(features_array)
+    cluster = kmeans.predict(scaled_features)[0]
+    
+    # Retorna perfil
+    return ProfileResponse(
+        cluster=cluster,
+        profile=CLUSTER_MAP.get(cluster),
+        description=PROFILE_DESCRIPTIONS.get(CLUSTER_MAP.get(cluster))
+    )
 
 # Para rodar localmente: uvicorn main:app --reload
