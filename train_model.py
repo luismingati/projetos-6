@@ -11,57 +11,34 @@ from sklearn.decomposition import PCA
 def train_kmeans_model(csv_path, output_dir="models"):
     """
     Treina um modelo KMeans com base no dataset fornecido e salva o modelo treinado.
-    
     Args:
         csv_path (str): Caminho para o arquivo CSV com os dados de treinamento
-        output_dir (str): Diretório onde os modelos serão salvos
-    
+        output_dir (str): Diretório onde o modelo será salvo
     Returns:
-        tuple: Modelo KMeans treinado e StandardScaler
+        KMeans: Modelo KMeans treinado
     """
-    # Criar diretório para os modelos se não existir
     os.makedirs(output_dir, exist_ok=True)
-    
-    # Carregar o dataset
     print(f"Carregando dataset: {csv_path}")
     df = pd.read_csv(csv_path)
-    
-    # Definir as features para o treinamento
     features = ['cores_vivas', 'versatilidade', 'conforto', 'formalidade', 'estampas']
     X = df[features].values
-    
-    # Normalizar os dados
-    print("Normalizando dados...")
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    
-    # Treinar o modelo KMeans com k=3 (conforme análise prévia)
-    print("Treinando modelo KMeans com k=3...")
-    k_opt = 3
-    kmeans = KMeans(n_clusters=k_opt, random_state=42, n_init=10)
-    labels = kmeans.fit_predict(X_scaled)
-    
-    # Avaliar o modelo
+
+    k_opt = 5
+    print(f"Treinando modelo KMeans com k={k_opt}...")
+    kmeans = KMeans(n_clusters=k_opt, random_state=40, n_init=20)
+    labels = kmeans.fit_predict(X)
+
     inertia = kmeans.inertia_
-    silhouette = silhouette_score(X_scaled, labels)
-    print(f"Inércia (k=3): {inertia:.2f}")
-    print(f"Silhouette Score (k=3): {silhouette:.4f}")
-    
-    # Salvar os modelos treinados
-    print(f"Salvando modelos em {output_dir}...")
+    silhouette = silhouette_score(X, labels)
+    print(f"Inércia (k={k_opt}): {inertia:.2f}")
+    print(f"Silhouette Score (k={k_opt}): {silhouette:.4f}")
+
+    print(f"Salvando modelo em {output_dir}...")
     with open(os.path.join(output_dir, 'kmeans_model.pkl'), 'wb') as f:
         pickle.dump(kmeans, f)
-    
-    with open(os.path.join(output_dir, 'scaler.pkl'), 'wb') as f:
-        pickle.dump(scaler, f)
-    
-    print("Modelos salvos com sucesso!")
-    
-    # Gerar visualizações (opcional)
-    if os.environ.get('GENERATE_PLOTS', 'False').lower() == 'true':
-        generate_visualizations(X_scaled, labels, output_dir)
-    
-    return kmeans, scaler
+    print("Modelo salvo com sucesso!")
+
+    return kmeans
 
 def generate_visualizations(X_scaled, labels, output_dir):
     """
@@ -116,7 +93,13 @@ def predict_profile(features_array, models_dir="models"):
         tuple: (cluster_id, profile_name) O ID do cluster e o nome do perfil correspondente
     """
     # Mapear clusters para perfis
-    cluster_map = {0: 'Profissional Moderno', 1: 'Casual Despojado', 2: 'Aventureiro Fashion'}
+    cluster_map = {
+        0: 'Profissional Moderno',
+        1: 'Casual Despojado',
+        2: 'Aventureiro Fashion',
+        3: 'Esportivo Casual',
+        4: 'Minimalista Chic',
+    }
     
     # Carregar modelos treinados
     try:
@@ -149,9 +132,11 @@ def test_model_with_examples():
     """
     # Definir personas de teste
     personas = {
-        'Persona X': [3, 4, 2, 5, 1],  # Alta formalidade (Profissional Moderno)
-        'Persona Y': [1, 1, 5, 3, 2],  # Alto conforto (Casual Despojado)
-        'Persona Z': [5, 2, 4, 1, 5]   # Cores vivas e estampas (Aventureiro Fashion)
+        'Persona X': [2, 4, 3, 5, 1],  # Profissional Moderno
+        'Persona Y': [4, 3, 5, 2, 2],  # Casual Despojado
+        'Persona Z': [5, 2, 3, 1, 5],  # Aventureiro Fashion
+        'Persona W': [4, 5, 4, 1, 3],  # Esportivo Casual
+        'Persona V': [1, 3, 2, 4, 1],  # Minimalista Chic
     }
     
     print("\nTestando modelo com personas de exemplo:")
@@ -168,15 +153,9 @@ def test_model_with_examples():
 
 if __name__ == "__main__":
     import sys
-    
     if len(sys.argv) < 2:
         print("Uso: python train_model.py <caminho_para_csv>")
         sys.exit(1)
-    
     csv_path = sys.argv[1]
-    
-    # Treinar modelo
-    kmeans, scaler = train_kmeans_model(csv_path)
-    
-    # Testar o modelo com exemplos
+    kmeans = train_kmeans_model(csv_path)
     test_model_with_examples()

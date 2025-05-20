@@ -26,7 +26,7 @@ MODEL_PATH = "models/kmeans_model.pkl"
 SCALER_PATH = "models/scaler.pkl"
 
 # Mapeamento dos clusters para perfis de moda
-CLUSTER_MAP = {0: 'Profissional Moderno', 1: 'Casual Despojado', 2: 'Aventureiro Fashion'}
+CLUSTER_MAP = {0: 'Profissional Moderno', 1: 'Casual Despojado', 2: 'Aventureiro Fashion', 3: 'Esportivo Casual', 4: 'Minimalista Chic'}
 
 # Carregar o dataset de roupas uma vez ao iniciar a aplicação para otimizar
 try:
@@ -136,7 +136,9 @@ def get_features_schema():
 PROFILE_DESCRIPTIONS = {
     'Profissional Moderno': "Você valoriza roupas formais com um toque contemporâneo. Prioriza peças versáteis que podem transitar entre ambientes profissionais e sociais mais sofisticados.",
     'Casual Despojado': "Seu foco está no conforto e praticidade. Prefere roupas que ofereçam liberdade de movimento e bem-estar, sem abrir mão de um visual casual e descontraído.",
-    'Aventureiro Fashion': "Você gosta de se expressar através de cores vibrantes e estampas marcantes. Não teme ousar e experimentar looks diferentes, priorizando autenticidade e criatividade."
+    'Aventureiro Fashion': "Você gosta de se expressar através de cores vibrantes e estampas marcantes. Não teme ousar e experimentar looks diferentes, priorizando autenticidade e criatividade.",
+    'Esportivo Casual': "Buscando o equilíbrio entre desempenho e estilo, você opta por peças funcionais com tecidos tecnológicos, mas que mantêm um visual descontraído e moderno para o dia a dia ativo.",
+    'Minimalista Chic': "Você valoriza a simplicidade e a elegância atemporal. Prefere cores neutras, cortes clean e peças que transmitam sofisticação discreta e versatilidade."
 }
 
 @app.get("/clothes")
