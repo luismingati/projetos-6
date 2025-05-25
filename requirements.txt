@@ -12,3 +12,5 @@ scikit-learn
 numpy
 matplotlib
 fastparquet
+supabase
+python-multipart
