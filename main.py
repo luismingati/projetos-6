@@ -1,4 +1,6 @@
-from fastapi import FastAPI, HTTPException, Depends
+from datetime import datetime
+import uuid
+from fastapi import FastAPI, File, HTTPException, Depends, UploadFile
 import pandas as pd
 import sqlite3
 from pydantic import BaseModel, Field
@@ -11,6 +13,7 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from dotenv import load_dotenv
+from supabase import Client, create_client
 
 # Carrega variáveis de ambiente do .env
 load_dotenv()
@@ -27,6 +30,16 @@ SCALER_PATH = "models/scaler.pkl"
 
 # Mapeamento dos clusters para perfis de moda
 CLUSTER_MAP = {0: 'Profissional Moderno', 1: 'Casual Despojado', 2: 'Aventureiro Fashion', 3: 'Esportivo Casual', 4: 'Minimalista Chic'}
+
+# --- Configuração do Supabase ---
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
+SUPABASE_BUCKET_NAME = os.getenv("SUPABASE_BUCKET_NAME", "clothes-images")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("As variáveis SUPABASE_URL e SUPABASE_ANON_KEY devem estar definidas no .env")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Carregar o dataset de roupas uma vez ao iniciar a aplicação para otimizar
 try:
@@ -90,6 +103,20 @@ def init_db():
         )
         '''
     )
+
+    cursor.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS uploaded_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            supabase_path TEXT NOT NULL UNIQUE,
+            public_url TEXT,
+            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            file_size INTEGER,
+            content_type TEXT
+        )
+        '''
+    )
     conn.commit()
     conn.close()
 
@@ -123,6 +150,11 @@ class ProfileResponse(BaseModel):
     profile: str
     description: str
 
+class UploadResponse(BaseModel):
+    message: str
+    uploaded_files: List[Dict[str, str]]
+    failed_files: List[Dict[str, str]]
+
 # Gera JSON Schema e remove restrições incompatíveis para OpenAI
 def get_features_schema():
     schema = ClothingFeatures.model_json_schema()
@@ -140,6 +172,197 @@ PROFILE_DESCRIPTIONS = {
     'Esportivo Casual': "Buscando o equilíbrio entre desempenho e estilo, você opta por peças funcionais com tecidos tecnológicos, mas que mantêm um visual descontraído e moderno para o dia a dia ativo.",
     'Minimalista Chic': "Você valoriza a simplicidade e a elegância atemporal. Prefere cores neutras, cortes clean e peças que transmitam sofisticação discreta e versatilidade."
 }
+
+# Função auxiliar para gerar nome único para arquivo
+def generate_unique_filename(original_filename: str) -> str:
+    """Gera um nome único para o arquivo baseado em timestamp e UUID"""
+    file_extension = os.path.splitext(original_filename)[1]
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = str(uuid.uuid4())[:8]
+    return f"{timestamp}_{unique_id}{file_extension}"
+
+# Função para validar tipo de arquivo de imagem
+def validate_image_file(file: UploadFile) -> bool:
+    """Valida se o arquivo é uma imagem válida"""
+    allowed_types = [
+        "image/jpeg", "image/jpg", "image/png", 
+        "image/gif", "image/webp", "image/bmp"
+    ]
+    return file.content_type in allowed_types
+
+@app.post("/upload-images", response_model=UploadResponse)
+async def upload_images_to_supabase(files: List[UploadFile] = File(...)):
+    """
+    Endpoint para fazer upload de múltiplas imagens para o Supabase Storage.
+    
+    Args:
+        files: Lista de arquivos de imagem para upload
+        
+    Returns:
+        UploadResponse com detalhes dos arquivos enviados e falhas
+    """
+    uploaded_files = []
+    failed_files = []
+    
+    # Conecta ao banco local para registrar uploads
+    conn = sqlite3.connect(DATABASE_URL)
+    cursor = conn.cursor()
+    
+    for file in files:
+        try:
+            # Valida se é um arquivo de imagem
+            if not validate_image_file(file):
+                failed_files.append({
+                    "filename": file.filename,
+                    "error": f"Tipo de arquivo não suportado: {file.content_type}"
+                })
+                continue
+            
+            # Lê o conteúdo do arquivo
+            file_content = await file.read()
+            file_size = len(file_content)
+            
+            # Gera nome único para o arquivo
+            unique_filename = generate_unique_filename(file.filename)
+            supabase_path = f"uploads/{unique_filename}"
+            
+            # Faz upload para o Supabase Storage
+            try:
+                upload_result = supabase.storage.from_(SUPABASE_BUCKET_NAME).upload(
+                    path=supabase_path,
+                    file=file_content,
+                    file_options={
+                        "content-type": file.content_type,
+                        "upsert": False  # Não sobrescreve arquivos existentes
+                    }
+                )
+                
+                # Gera URL pública do arquivo
+                public_url = supabase.storage.from_(SUPABASE_BUCKET_NAME).get_public_url(supabase_path)
+                
+                # Salva informações no banco local
+                cursor.execute(
+                    """
+                    INSERT INTO uploaded_images 
+                    (filename, supabase_path, public_url, file_size, content_type)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (file.filename, supabase_path, public_url, file_size, file.content_type)
+                )
+                
+                uploaded_files.append({
+                    "original_filename": file.filename,
+                    "supabase_path": supabase_path,
+                    "public_url": public_url,
+                    "file_size": f"{file_size} bytes"
+                })
+                
+                logger.info(f"Upload bem-sucedido: {file.filename} -> {supabase_path}")
+                
+            except Exception as supabase_error:
+                failed_files.append({
+                    "filename": file.filename,
+                    "error": f"Erro no Supabase: {str(supabase_error)}"
+                })
+                logger.error(f"Erro no upload para Supabase - {file.filename}: {supabase_error}")
+                
+        except Exception as e:
+            failed_files.append({
+                "filename": file.filename if file.filename else "arquivo_sem_nome",
+                "error": f"Erro geral: {str(e)}"
+            })
+            logger.error(f"Erro geral no upload - {file.filename}: {e}")
+    
+    # Confirma transações no banco local
+    conn.commit()
+    conn.close()
+    
+    # Prepara resposta
+    total_uploaded = len(uploaded_files)
+    total_failed = len(failed_files)
+    
+    message = f"Upload concluído: {total_uploaded} arquivo(s) enviado(s) com sucesso"
+    if total_failed > 0:
+        message += f", {total_failed} arquivo(s) falharam"
+    
+    return UploadResponse(
+        message=message,
+        uploaded_files=uploaded_files,
+        failed_files=failed_files
+    )
+
+@app.get("/uploaded-images")
+def get_uploaded_images():
+    """
+    Retorna lista de todas as imagens que foram enviadas para o Supabase.
+    """
+    conn = sqlite3.connect(DATABASE_URL)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT id, filename, supabase_path, public_url, upload_date, file_size, content_type
+        FROM uploaded_images 
+        ORDER BY upload_date DESC
+    """)
+    
+    images = []
+    for row in cursor.fetchall():
+        images.append({
+            "id": row[0],
+            "filename": row[1],
+            "supabase_path": row[2],
+            "public_url": row[3],
+            "upload_date": row[4],
+            "file_size": row[5],
+            "content_type": row[6]
+        })
+    
+    conn.close()
+    
+    return {
+        "total_images": len(images),
+        "images": images
+    }
+
+@app.delete("/uploaded-images/{image_id}")
+def delete_uploaded_image(image_id: int):
+    """
+    Remove uma imagem do Supabase Storage e do banco local.
+    """
+    conn = sqlite3.connect(DATABASE_URL)
+    cursor = conn.cursor()
+    
+    # Busca informações da imagem
+    cursor.execute(
+        "SELECT supabase_path, filename FROM uploaded_images WHERE id = ?",
+        (image_id,)
+    )
+    result = cursor.fetchone()
+    
+    if not result:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Imagem não encontrada")
+    
+    supabase_path, filename = result
+    
+    try:
+        # Remove do Supabase Storage
+        supabase.storage.from_(SUPABASE_BUCKET_NAME).remove([supabase_path])
+        
+        # Remove do banco local
+        cursor.execute("DELETE FROM uploaded_images WHERE id = ?", (image_id,))
+        conn.commit()
+        conn.close()
+        
+        return {"message": f"Imagem '{filename}' removida com sucesso"}
+        
+    except Exception as e:
+        conn.close()
+        logger.error(f"Erro ao remover imagem {image_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao remover imagem: {str(e)}"
+        )
 
 @app.get("/clothes")
 def get_random_clothes():
